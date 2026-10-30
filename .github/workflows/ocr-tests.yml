@@ -1,0 +1,28 @@
+name: Validação OCR
+on:
+  push:
+    branches: ["feat/paddleocr-fotos"]
+  pull_request:
+    paths:
+      - "index.html"
+      - "paddle-adapter.js"
+      - "tests/**"
+      - "sw.js"
+      - ".github/workflows/ocr-tests.yml"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sintaxe do adaptador e service worker
+        run: |
+          node --check paddle-adapter.js
+          node --check sw.js
+      - name: Sintaxe do JavaScript embutido no HTML
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const s=fs.readFileSync("index.html","utf8"); const blocks=[...s.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]; if(!blocks.length) throw Error("Nenhum script inline"); for(const b of blocks) new Function(b[1]);'
+      - name: Testes do adaptador OCR
+        run: node --experimental-default-type=module --test tests/ocr-adapter.test.mjs
