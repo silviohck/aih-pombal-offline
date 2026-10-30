@@ -1,4 +1,4 @@
-const CACHE = "aih-pombal-offline-v2";
+const CACHE = "aih-pombal-offline-v3";
 const ASSETS = [
   "./",
   "./index.html",
