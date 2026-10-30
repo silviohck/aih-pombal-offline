@@ -167,6 +167,12 @@ input.duvida{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 1
       <span class="hint">Enquadre somente a folha, de frente e com boa iluminação. Cada foto vira um laudo separado.</span>
       <input type="file" id="file" accept="image/*" capture="environment" multiple>
     </label>
+    <label class="f" for="ocrEngine">Leitor de texto das fotografias</label>
+    <select id="ocrEngine">
+      <option value="tesseract">Tesseract — offline (atual)</option>
+      <option value="paddle">PaddleOCR v6 — novo (teste)</option>
+    </select>
+    <p class="hint" style="margin-top:6px">PaddleOCR baixa código e modelos da internet antes da primeira leitura. As fotos são processadas no aparelho. Se falhar, o aplicativo tenta o Tesseract offline.</p>
     <p class="status" id="status" role="status"></p>
     <div class="progress" id="ocrProgress" hidden><span></span></div>
     <label class="f" for="dataSol">32 - Data da solicitação (vale para todos)</label>
@@ -313,6 +319,14 @@ const fila = [];
 let processando = false;
 let ocrWorker = null;
 let ocrAtual = null;
+const OCR_PREF = "aih-ocr-engine";
+try {
+  const preferido = localStorage.getItem(OCR_PREF);
+  if (preferido === "paddle") $("#ocrEngine").value = "paddle";
+} catch(e) {}
+$("#ocrEngine").onchange = () => {
+  try { localStorage.setItem(OCR_PREF, $("#ocrEngine").value); } catch(e) {}
+};
 const kitDe = it => store.kits.find(k => k.id === it.kit) || kit();
 const dado = (it, k) => String(it.dados[k] || "").trim();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -429,13 +443,32 @@ async function lerFoto(it){
   try {
     ocrAtual = it;
     const tarefa = (async () => {
-      const canvas = await imagemOCR(it), worker = await obterOCR();
+      const canvas = await imagemOCR(it);
+      let voltou = false;
+      if ($("#ocrEngine").value === "paddle") {
+        try {
+          const { reconhecerPaddle } = await import("./paddle-adapter.js");
+          const data = await reconhecerPaddle(canvas, mensagem => {
+            it.msg = mensagem;
+            const st = document.querySelector("#c_" + it.id + " .st");
+            if (st) st.textContent = mensagem;
+          });
+          return { canvas, res:{ data }, motorUsado:"PaddleOCR", voltou:false };
+        } catch(erro) {
+          console.warn("PaddleOCR indisponível; usando Tesseract offline.", erro);
+          voltou = true;
+          it.msg = "PaddleOCR indisponível. Tentando Tesseract offline…";
+          const st = document.querySelector("#c_" + it.id + " .st");
+          if (st) st.textContent = it.msg;
+        }
+      }
+      const worker = await obterOCR();
       const res = await worker.recognize(canvas, {}, { text:true, blocks:true });
-      return { canvas, res };
+      return { canvas, res, motorUsado:"Tesseract", voltou };
     })();
     let timer;
     const limite = new Promise((_, rejeita) => { timer = setTimeout(() => { const e = new Error("OCR_TIMEOUT"); e.code = "OCR_TIMEOUT"; rejeita(e); }, 120000); });
-    const { canvas, res } = await Promise.race([tarefa, limite]);
+    const { canvas, res, motorUsado, voltou } = await Promise.race([tarefa, limite]);
     clearTimeout(timer);
     const words = palavrasOCR(res.data), allText = String(res.data.text || "");
     it.dados = {}; it.duvidas = new Set();
@@ -453,7 +486,7 @@ async function lerFoto(it){
     const n = PAC.filter(p => dado(it, p.k)).length;
     if (!n){ it.status = "erro"; it.aberto = true; it.msg = "Não consegui ler dados nesta foto. Digite os dados ou tire outra foto."; return; }
     it.status = "pronto"; it.aberto = it.duvidas.size > 0;
-    it.msg = "Pronto. " + n + " de " + PAC.length + " campos lidos" + (it.duvidas.size ? ", " + it.duvidas.size + " para conferir." : ".");
+    it.msg = "Pronto. " + n + " de " + PAC.length + " campos lidos" + (it.duvidas.size ? ", " + it.duvidas.size + " para conferir." : ".") + (voltou ? " Tesseract usado como reserva." : " OCR: " + motorUsado + ".");
   } catch(e){
     it.status = "erro"; it.aberto = true;
     if (e && (e.code === "OCR_TIMEOUT" || e.message === "OCR_TIMEOUT")) {
