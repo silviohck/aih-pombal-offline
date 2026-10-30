@@ -1,4 +1,4 @@
-const CACHE = "aih-pombal-offline-v4";
+const CACHE = "aih-pombal-offline-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,6 +12,7 @@ const ASSETS = [
   "./pdf.min.js",
   "./pdf.worker.min.js",
   "./tesseract.min.js",
+  "./paddle-adapter.js",
   "./worker.min.js",
   "./tesseract-core-lstm.wasm.js",
   "./tesseract-core-lstm.wasm",
