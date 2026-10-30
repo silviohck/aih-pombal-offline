@@ -312,6 +312,7 @@ $("#kitDel").onclick = () => {
 const fila = [];
 let processando = false;
 let ocrWorker = null;
+let ocrAtual = null;
 const kitDe = it => store.kits.find(k => k.id === it.kit) || kit();
 const dado = (it, k) => String(it.dados[k] || "").trim();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -321,13 +322,27 @@ function progressoOCR(m){
   if (m && m.status === "recognizing text") {
     box.hidden = false; bar.style.width = Math.round((m.progress || 0) * 100) + "%";
   }
+  if (ocrAtual && m && m.status) {
+    const pct = Math.round((m.progress || 0) * 100);
+    const etapas = {
+      "loading tesseract core":"Preparando o leitor…",
+      "loading language traineddata":"Carregando o português…",
+      "initializing api":"Iniciando a leitura…",
+      "recognizing text":"Lendo o texto… " + pct + "%"
+    };
+    if (etapas[m.status]) {
+      ocrAtual.msg = etapas[m.status];
+      const st = document.querySelector("#c_" + ocrAtual.id + " .st");
+      if (st) st.textContent = ocrAtual.msg;
+    }
+  }
 }
 async function obterOCR(){
   if (ocrWorker) return ocrWorker;
   if (!window.Tesseract) throw new Error("OCR indisponível");
   ocrWorker = await Tesseract.createWorker("por", Tesseract.OEM.LSTM_ONLY, {
     workerPath:"./worker.min.js",
-    corePath:"./",
+    corePath:"./tesseract-core-lstm.wasm.js",
     langPath:"./",
     logger:progressoOCR
   });
@@ -350,7 +365,7 @@ async function imagemOCR(it){
   let sx = 0, sy = 0, sw = iw, sh = ih;
   if (iw / ih > ratio) { sw = ih * ratio; sx = (iw - sw) / 2; }
   else { sh = iw / ratio; sy = (ih - sh) / 2; }
-  const c = document.createElement("canvas"); c.width = 1400; c.height = Math.round(c.width / ratio);
+  const c = document.createElement("canvas"); c.width = 1100; c.height = Math.round(c.width / ratio);
   const ctx = c.getContext("2d", { willReadFrequently:true });
   ctx.drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
   const px = ctx.getImageData(0, 0, c.width, c.height), d = px.data;
@@ -412,8 +427,16 @@ async function processar(){
 }
 async function lerFoto(it){
   try {
-    const canvas = await imagemOCR(it), worker = await obterOCR();
-    const res = await worker.recognize(canvas, {}, { text:true, blocks:true });
+    ocrAtual = it;
+    const tarefa = (async () => {
+      const canvas = await imagemOCR(it), worker = await obterOCR();
+      const res = await worker.recognize(canvas, {}, { text:true, blocks:true });
+      return { canvas, res };
+    })();
+    let timer;
+    const limite = new Promise((_, rejeita) => { timer = setTimeout(() => { const e = new Error("OCR_TIMEOUT"); e.code = "OCR_TIMEOUT"; rejeita(e); }, 120000); });
+    const { canvas, res } = await Promise.race([tarefa, limite]);
+    clearTimeout(timer);
     const words = palavrasOCR(res.data), allText = String(res.data.text || "");
     it.dados = {}; it.duvidas = new Set();
     PAC.filter(p => p.box).forEach(p => {
@@ -433,9 +456,15 @@ async function lerFoto(it){
     it.msg = "Pronto. " + n + " de " + PAC.length + " campos lidos" + (it.duvidas.size ? ", " + it.duvidas.size + " para conferir." : ".");
   } catch(e){
     it.status = "erro"; it.aberto = true;
-    it.msg = "Não consegui ler esta foto. Confira se a folha está inteira e reta, ou digite os dados.";
+    if (e && (e.code === "OCR_TIMEOUT" || e.message === "OCR_TIMEOUT")) {
+      it.msg = "A leitura demorou demais e foi interrompida. Toque em Ler de novo ou tire a foto mais perto da folha.";
+      if (ocrWorker) { ocrWorker.terminate().catch(() => {}); ocrWorker = null; }
+    } else {
+      it.msg = "Não consegui ler esta foto. Confira se a folha está inteira e reta, ou digite os dados.";
+    }
     console.error(e);
   } finally {
+    ocrAtual = null;
     $("#ocrProgress").hidden = true; $("#ocrProgress span").style.width = "0";
   }
 }
